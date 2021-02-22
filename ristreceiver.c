@@ -61,6 +61,7 @@ static struct option long_options[] = {
 { "stats",           required_argument, NULL, 'S' },
 { "verbose-level",   required_argument, NULL, 'v' },
 { "remote-logging",  required_argument, NULL, 'r' },
+{ "thread_number",          required_argument, NULL, 'a' },
 #ifdef USE_MBEDTLS
 { "srpfile",         required_argument, NULL, 'F' },
 #endif
@@ -70,6 +71,7 @@ static struct option long_options[] = {
 };
 
 const char help_str[] = "Usage: %s [OPTIONS] \nWhere OPTIONS are:\n"
+"       -a | --thread number                      | Indicates which incoming RIST stream this refers to      |\n"
 "       -i | --inputurl  rist://...             * | Comma separated list of input rist URLs                  |\n"
 "       -o | --outputurl udp://... or rtp://... * | Comma separated list of output udp or rtp URLs           |\n"
 "       -b | --buffer value                       | Default buffer size for packet retransmissions           |\n"
@@ -92,9 +94,15 @@ const char help_str[] = "Usage: %s [OPTIONS] \nWhere OPTIONS are:\n"
 "       --statsinterval 1000      \\\n"
 "       --verbose-level 6         \n";
 
+struct thread_params {
+    int thread_number;
+    char outputurl[100];
+};
+
 
 //This is the function that receives the UDP input and produces timestamps
-void * ffmpeg (void *outputurl){
+void * ffmpeg (void *_args){
+  struct thread_params *args = (struct thread_params *) _args;
   AVFormatContext *input_format_context = NULL, *output_format_context = NULL;
   AVPacket packet;
   char out_filename[104];
@@ -105,8 +113,8 @@ void * ffmpeg (void *outputurl){
   int fragmented_mp4_options = 0;
   int argc = 3;
   //Output URL from RIST is used as input URL for ffmpeg
-  const char * in_filename = outputurl;
-
+  const char * in_filename = strdup(args->outputurl);
+  int thread_number = args->thread_number;
   if (argc < 3) {
     printf("You need to pass at least two parameters.\n");
   } else if (argc == 4) {
@@ -144,10 +152,10 @@ void * ffmpeg (void *outputurl){
   streams_list = av_mallocz_array(number_of_streams, sizeof(*streams_list));
 
   for (i =0; i < number_of_streams; i++){
-    char file_path[100];
-    snprintf(file_path,100,"/home/coplaj01/Documents/streaming/PTS_log%d.csv",i+1);
+    char PTS_file_path[100];
+    snprintf(PTS_file_path,100,"/home/coplaj01/Documents/streaming/PTS_log_thread_%d_stream_%d.csv",thread_number,i+1);
     FILE * fp;
-    fp = fopen (file_path, "w");
+    fp = fopen (PTS_file_path, "w");
     fclose(fp);
   }
 
@@ -231,9 +239,11 @@ void * ffmpeg (void *outputurl){
     transformed_pts=transformed_pts-first_packet_ts;
 	//At the moment I can't get setter and getter functions to work so I'm saving and loading the NTP ts from a file
     char NTP_ts_string[200];
+	char NTP_file_path[100];
+	snprintf(NTP_file_path,100,"/home/coplaj01/Documents/streaming/NTP_ts%d.txt",thread_number);
     FILE * fp;
-    if ((fp = fopen("/home/coplaj01/Documents/streaming/NTP_ts.txt","r")) == NULL){
-      printf("Error! opening file");
+    if ((fp = fopen(NTP_file_path,"r")) == NULL){
+      printf("Error! opening file %s",NTP_file_path);
       // Program exits if the file pointer returns NULL.
       exit(1);
     }
@@ -245,10 +255,10 @@ void * ffmpeg (void *outputurl){
 	//.9 makes it print to 9 decimal places
 	printf("Packet ts %.9Lf\n",timestamp);
 	//Saving timestamps to file
-    char file_path[100];
-    snprintf(file_path,100,"/home/coplaj01/Documents/streaming/PTS_log%d.csv",packet.stream_index+1);
+    char PTS_file_path[100];
+    snprintf(PTS_file_path,100,"/home/coplaj01/Documents/streaming/PTS_log_thread_%d_stream_%d.csv",thread_number,packet.stream_index+1);
     FILE * fp2;
-    fp2 = fopen (file_path, "a");
+    fp2 = fopen (PTS_file_path, "a");
     fprintf(fp2, "%.9Lf\n",timestamp);
     fclose(fp2);
     packet.pos = -1;
@@ -261,6 +271,7 @@ void * ffmpeg (void *outputurl){
   }
   av_write_trailer(output_format_context);
 end:
+  free(args);
   avformat_close_input(&input_format_context);
   /* close output */
   if (output_format_context && !(output_format_context->oformat->flags & AVFMT_NOFILE))
@@ -444,6 +455,8 @@ static int cb_stats(void *arg, const struct rist_stats *stats_container) {
 	return 0;
 }
 
+
+
 int main(int argc, char *argv[])
 {
 	int option_index;
@@ -460,6 +473,8 @@ int main(int argc, char *argv[])
 	enum rist_log_level loglevel = RIST_LOG_INFO;
 	int statsinterval = 1000;
 	char *remote_log_address = NULL;
+	int thread_number;
+	char *thread_number_string = NULL;
 #ifndef _WIN32
 	/* Receiver pipe handle */
 	int receiver_pipe[2];
@@ -494,7 +509,7 @@ int main(int argc, char *argv[])
 
 	rist_log(logging_settings, RIST_LOG_INFO, "Starting ristreceiver version: %s libRIST library: %s API version: %s\n", LIBRIST_VERSION, librist_version(), librist_api_version());
 
-	while ((c = (char)getopt_long(argc, argv, "r:i:o:b:s:e:t:p:S:v:F:h:u", long_options, &option_index)) != -1) {
+	while ((c = (char)getopt_long(argc, argv, "r:i:o:b:s:e:t:p:S:v:a:F:h:u", long_options, &option_index)) != -1) {
 		switch (c) {
 		case 'i':
 			inputurl = strdup(optarg);
@@ -526,6 +541,10 @@ int main(int argc, char *argv[])
 		case 'r':
 			remote_log_address = strdup(optarg);
 		break;
+		case 'a':
+			thread_number = atoi(optarg);
+			thread_number_string = strdup(optarg);
+		break;
 #ifdef USE_MBEDTLS
 		case 'F':
 			srpfile = fopen(optarg, "r");
@@ -546,9 +565,17 @@ int main(int argc, char *argv[])
 		break;
 		}
 	}
-    pthread_t thread_id; 
-    printf("Before Thread %s\n",outputurl); 
-    pthread_create(&thread_id, NULL, ffmpeg, outputurl); 
+	char env_command[500];
+	//snprintf(env_command,500,"export THREAD_NUMBER=%s",thread_number_string);
+	//printf("%s\n",env_command);
+	//system(env_command);
+	setenv("THREAD_NUMBER",thread_number_string,1);
+	printf("THREAD_NUMBER : %s\n", getenv("THREAD_NUMBER"));
+    pthread_t thread_id;
+	struct thread_params thread_params1;
+	strcpy(thread_params1.outputurl, outputurl);
+	thread_params1.thread_number = thread_number;
+    pthread_create(&thread_id, NULL, ffmpeg, &thread_params1); 
      
 
 	if (inputurl == NULL || outputurl == NULL) {

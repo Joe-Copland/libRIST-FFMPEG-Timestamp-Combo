@@ -1816,8 +1816,15 @@ static void rist_handle_sr_pkt(struct rist_peer *peer, struct rist_rtcp_sr_pkt *
 		sprintf(sender_packet_ntp_ts_string, "%.9Lf", combination);
 		printf("ntp ts %s \n",sender_packet_ntp_ts_string);
 		//Saving NTP ts to file
+		char file_string[500];
+		char file_string_start[200]="/home/coplaj01/Documents/streaming/NTP_ts";
+		//char file_string_middle[200];
+		char file_string_end[200]=".txt";
+		const char* thread_number = getenv("THREAD_NUMBER");
+		//sprintf(file_string_middle, "%d", thread_number);
+		snprintf(file_string,500,"%s%s%s",file_string_start,thread_number,file_string_end);
 		FILE *fp;
-   		fp = fopen("/home/coplaj01/Documents/streaming/NTP_ts.txt", "w+");
+   		fp = fopen(file_string, "w+");
    		fprintf(fp, "%s", sender_packet_ntp_ts_string);
    		fclose(fp);
 	}
