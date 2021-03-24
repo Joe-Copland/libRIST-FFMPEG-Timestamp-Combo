@@ -19,14 +19,6 @@
 #include <stdint.h>
 #include <assert.h>
 
-void print_ts(uint32_t RTP_ts, uint64_t NTP_ts){
-	uint32_t seconds_ts = (uint32_t)(NTP_ts >> 32);
-	long double fractions_ts = (uint32_t)(NTP_ts);
-	double decimal_ts = fractions_ts / 4294967296;
-	long double combination = decimal_ts+seconds_ts;
-	printf("RTP ts %u NTP %.9Lf\n",RTP_ts,combination);
-}
-
 uint64_t timestampNTP_u64(void)
 {
 
@@ -70,7 +62,7 @@ uint64_t timestampNTP_RTC_u64(void) {
 	t /= 1000000000;
 	// There is 70 years (incl. 17 leap ones) offset to the Unix Epoch.
 	// No leap seconds during that period since they were not invented yet.
-	t |= (70LL * 365 + 17) * 24 * 60 * 60 + ts.tv_sec;
+	t |= ((70LL * 365 + 17) * 24 * 60 * 60 + ts.tv_sec) << 32;
 	return t;
 }
 
@@ -243,10 +235,7 @@ size_t rist_send_seq_rtcp(struct rist_peer *p, uint32_t seq, uint16_t seq_rtp, u
 				hdr->rtp.ssrc = htobe32(p->adv_flow_id | 0x01);
 			}
 			hdr->rtp.payload_type = RTP_PTYPE_MPEGTS;
-			//hdr->rtp.ts=htobe32((uint32_t)128);
 			hdr->rtp.ts = htobe32(timestampRTP_u32(0, source_time));
-			printf("MPEG ");
-			print_ts(timestampRTP_u32(0, source_time),source_time);
 		}
 		// copy the rtp header data (needed for encryption)
 		memcpy(_payload - hdr_len, hdr, hdr_len);
@@ -593,18 +582,13 @@ static inline void rist_rtcp_write_sr(uint8_t *buf, int *offset, struct rist_pee
 	uint64_t now_rtc = timestampNTP_RTC_u64();
 	peer->last_sender_report_time = now_rtc;
 	peer->last_sender_report_ts = now;
-	//uint32_t ntp_lsw = (uint32_t)now_rtc;
-	uint32_t ntp_lsw = (uint32_t)now;
+	uint32_t ntp_lsw = (uint32_t)now_rtc;
 	// There is 70 years (incl. 17 leap ones) offset to the Unix Epoch.
 	// No leap seconds during that period since they were not invented yet.
-	uint32_t ntp_msw = now >> 32;
-	//uint32_t ntp_msw = now_rtc >> 32;
+	uint32_t ntp_msw = now_rtc >> 32;
 	sr->ntp_msw = htobe32(ntp_msw);
 	sr->ntp_lsw = htobe32(ntp_lsw);
 	sr->rtp_ts = htobe32(timestampRTP_u32(0, now));
-	printf("RTCP ");
-	print_ts(timestampRTP_u32(0,now),now);
-	//printf("RTCP RTP ts %u NTP ts %lu \n",timestampRTP_u32(0,now),now); 
 	sr->sender_pkts = 0;  //htonl(f->packets_count);
 	sr->sender_bytes = 0; //htonl(f->bytes_count);
 }

@@ -32,6 +32,7 @@ static struct rist_peer *peer_initialize(const char *url, struct rist_sender *se
 										struct rist_receiver *receiver_ctx);
 uint64_t sender_packet_ntp_ts=0;
 uint32_t sender_packet_rtp_ts=0;
+int save_ntp_switch = 0;
 
 void print_ts(uint32_t RTP_ts, uint64_t NTP_ts){
 	uint32_t seconds_ts = (uint32_t)(NTP_ts >> 32);
@@ -1803,18 +1804,15 @@ static void rist_rtcp_handle_echo_response(struct rist_peer *peer, struct rist_r
 }
 
 
-
-static void rist_handle_sr_pkt(struct rist_peer *peer, struct rist_rtcp_sr_pkt *sr) {
-	uint64_t ntp_time = ((uint64_t)be32toh(sr->ntp_msw) << 32) | be32toh(sr->ntp_lsw);
-	if (sender_packet_ntp_ts == 0){
-		sender_packet_ntp_ts=ntp_time;
-		uint32_t seconds_ts = (uint32_t)(sender_packet_ntp_ts >> 32);
-		long double fractions_ts = (uint32_t)(sender_packet_ntp_ts);
+void save_ntp_ts(uint64_t ntp_time){
+	if (save_ntp_switch == 0){
+		save_ntp_switch=1;
+		uint32_t seconds_ts = (uint32_t)(ntp_time >> 32);
+		long double fractions_ts = (uint32_t)(ntp_time);
 		double decimal_ts = fractions_ts / 4294967296;
 		long double combination = decimal_ts+seconds_ts;
 		char sender_packet_ntp_ts_string[500];
 		sprintf(sender_packet_ntp_ts_string, "%.9Lf", combination);
-		printf("ntp ts %s \n",sender_packet_ntp_ts_string);
 		//Saving NTP ts to file
 		char file_string[500];
 		char file_string_start[200]="/home/coplaj01/Documents/streaming/NTP_ts";
@@ -1828,7 +1826,13 @@ static void rist_handle_sr_pkt(struct rist_peer *peer, struct rist_rtcp_sr_pkt *
    		fprintf(fp, "%s", sender_packet_ntp_ts_string);
    		fclose(fp);
 	}
-	sender_packet_ntp_ts=ntp_time;
+}
+
+
+static void rist_handle_sr_pkt(struct rist_peer *peer, struct rist_rtcp_sr_pkt *sr) {
+	uint64_t ntp_time = ((uint64_t)be32toh(sr->ntp_msw) << 32) | be32toh(sr->ntp_lsw);
+	//save_ntp_ts(ntp_time); use this to set ntp ts using first sender packet
+	sender_packet_ntp_ts = ntp_time;
 	sender_packet_rtp_ts=be32toh(sr->rtp_ts);
 	printf("RTCP ");
 	print_ts(be32toh(sr->rtp_ts),ntp_time);
@@ -2487,11 +2491,19 @@ protocol_bypass:
 							source_time = timestampNTP_u64();
 						else{
 							source_time = convertRTPtoNTP(proto_hdr->rtp.payload_type, time_extension, rtp_time);
-							int32_t offset_ntp_ts = (rtp_time - sender_packet_rtp_ts)*(4294967296/90000);//converting to correct units
+							uint32_t rtp_packet_rtp_ts = rtp_time;
+							if (rtp_packet_rtp_ts>sender_packet_rtp_ts){
+								uint32_t fractional_offset = (rtp_packet_rtp_ts - sender_packet_rtp_ts)*(4294967296/90000);//converting to correct units
+							}
+							else{
+								uint32_t fractional_offset = ((int64_t)rtp_packet_rtp_ts - (int64_t)sender_packet_rtp_ts+4294967296)*(4294967296/90000);//converting to correct units
+							}
 							uint32_t sender_msw = sender_packet_ntp_ts >> 32;
 							uint32_t sender_lsw = (uint32_t)sender_packet_ntp_ts;
 							uint32_t adjusted_lsw = sender_lsw + offset_ntp_ts;
-							uint64_t recovered_ntp_ts = (uint64_t)sender_msw << 32 | adjusted_lsw;
+							uint64_t rollover = ((uint64_t)sender_lsw + (uint64_t)fractional_offset)/(uint64_t)adjusted_lsw-((uint64_t)sender_lsw + (uint64_t)fractional_offset)%(uint64_t)adjusted_lsw;
+							uint64_t recovered_ntp_ts = ((uint64_t)sender_msw + rollover)<< 32 | adjusted_lsw;
+							save_ntp_ts(recovered_ntp_ts);
 							printf("MPEG ");
 							print_ts(rtp_time,recovered_ntp_ts);
 							//printf("sender_packet_ntp_ts %lu \nsender_packet_rtp_ts %u \noffset_ntp_ts %u \nsender_msw %u \nsender_lsw %u \nadjusted_lsw %u \nrecovered_ntp_ts %lu \n",sender_packet_ntp_ts,sender_packet_rtp_ts,offset_ntp_ts,sender_msw,sender_lsw,adjusted_lsw,recovered_ntp_ts);
