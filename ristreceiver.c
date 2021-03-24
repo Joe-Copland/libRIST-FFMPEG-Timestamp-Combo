@@ -150,7 +150,7 @@ void * ffmpeg (void *_args){
 
   number_of_streams = input_format_context->nb_streams;
   streams_list = av_mallocz_array(number_of_streams, sizeof(*streams_list));
-
+  
   for (i =0; i < number_of_streams; i++){
     char PTS_file_path[100];
     snprintf(PTS_file_path,100,"/home/coplaj01/Documents/streaming/PTS_log_thread_%d_stream_%d.csv",thread_number,i+1);
@@ -230,6 +230,7 @@ void * ffmpeg (void *_args){
     long double numerator = in_stream->time_base.num;
     long double denominator = in_stream->time_base.den;
     long double converted_time_base=numerator/denominator;
+	printf("time base %.12Lf",converted_time_base);
     //Packet PTS converted to seconds unit
     long double transformed_pts=packet.pts * converted_time_base;
 	//Setting initial timestamp so we can make them go up from 0
